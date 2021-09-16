@@ -94,6 +94,7 @@ dictPWD = {param_PWD[0]:"",param_PWD[1]:"",param_PWD[2]:"",param_PWD[3]:"",param
 listPWD = list(dictPWD)
 
 #-> get each image of each button from the virtual keyboard
+os.makedirs("img", exist_ok=True)
 index = 0
 for lineNum in range(16):
     id_image = "val_cel_"+ str(index)
