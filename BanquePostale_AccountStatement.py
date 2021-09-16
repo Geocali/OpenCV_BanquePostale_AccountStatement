@@ -12,8 +12,8 @@
 ################################################################################
 # Requirements:
 #  Firefox installed in environment
-#  pip install opencv-python opencv-contrib-python
-#  pip install selenium
+#  pip install -r requirements.txt
+#  download Geckodriver from https://github.com/mozilla/geckodriver/releases and put it in the directory
 ################################################################################
 # PARAMETERS
 # All input parameters extracted from json file "BanquePostale_account.json"
@@ -27,11 +27,11 @@
 #    else 'False' when we want the script to open a visible firefox window
 ################################################################################
 import sys
-import pdb
 import time
 from selenium import webdriver
 from selenium.webdriver.firefox.options import Options
 from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.firefox.firefox_binary import FirefoxBinary
 # from skimage.measure import compare_ssim #for compare_ssim
 # from skimage import measure #new version of compare_ssim
 from skimage.metrics import structural_similarity as ssim
@@ -41,6 +41,8 @@ import cv2 #image matching
 import glob #to check if file exist
 import os
 import json
+
+curr_path = os.path.dirname(os.path.realpath(__file__))
 
 #-> read banque account parameters from json file:
 try:
@@ -77,7 +79,7 @@ try:
     options.set_preference("browser.download.useDownloadDir", True)
     options.set_preference("browser.helperApps.neverAsk.saveToDisk", "application/pdf")
     options.set_preference("pdfjs.disabled", True)  # disable the built-in PDF viewer
-    driver = webdriver.Firefox(options=options)
+    driver = webdriver.Firefox(executable_path=curr_path + '/geckodriver', options=options)
     driver.get("https://voscomptesenligne.labanquepostale.fr/wsost/OstBrokerWeb/loginform?TAM_OP=login&ERROR_CODE=0x00000000&URL=%2Fvoscomptes%2FcanalXHTML%2Fidentif.ea%3Forigin%3Dparticuliers")
 
 except Exception as e:
