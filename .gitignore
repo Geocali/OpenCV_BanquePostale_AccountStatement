@@ -2,3 +2,4 @@ BanquePostale_account.json
 geckodriver.log
 geckodriver
 img/
+__pycache__

@@ -34,7 +34,7 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.firefox.firefox_binary import FirefoxBinary
 # from skimage.measure import compare_ssim #for compare_ssim
 # from skimage import measure #new version of compare_ssim
-from skimage.metrics import structural_similarity as ssim
+from skimage.metrics import structural_similarity as ssim, hausdorff_distance, mean_squared_error
 from PIL import Image
 import io
 import cv2 #image matching
@@ -72,7 +72,7 @@ def get_account_params():
         params['HEADLESS_PROCESS'])
     return params
 
-def create_driver():
+def start_login(params):
     options = Options()
 
     if (params['HEADLESS_PROCESS'] == "True"):
@@ -84,80 +84,99 @@ def create_driver():
     options.set_preference("browser.helperApps.neverAsk.saveToDisk", "application/pdf")
     options.set_preference("pdfjs.disabled", True)  # disable the built-in PDF viewer
     driver = webdriver.Firefox(executable_path=curr_path + '/geckodriver', options=options)
+    driver.get(
+        "https://voscomptesenligne.labanquepostale.fr/wsost/OstBrokerWeb/"
+        "loginform?TAM_OP=login&ERROR_CODE=0x00000000&"
+        "URL=%2Fvoscomptes%2FcanalXHTML%2Fidentif.ea%3Forigin%3Dparticuliers"
+    )
+
+    # send id to form
+    driver.find_element_by_id("val_cel_identifiant").send_keys(params['ID'])
+
+    #-> get each image of each button from the virtual keyboard
+    os.makedirs("img", exist_ok=True)
+    for index in range(16):
+        id_image = "val_cel_"+ str(index)
+        img = driver.find_element_by_id(id_image).screenshot_as_png
+        image = Image.open(io.BytesIO(img))
+        image.save('img/'+id_image+'.png')
+
     return driver
 
-params = get_account_params()
-driver = create_driver()
-driver.get("https://voscomptesenligne.labanquepostale.fr/wsost/OstBrokerWeb/loginform?TAM_OP=login&ERROR_CODE=0x00000000&URL=%2Fvoscomptes%2FcanalXHTML%2Fidentif.ea%3Forigin%3Dparticuliers")
 
-# send id to form
-driver.find_element_by_id("val_cel_identifiant").send_keys(params['ID'])
+def detect_digits(
+    params,
+    downloaded_images_folder: str = 'img',
+):
+    #-> Match for first pwd digit
+    uniq_digits_in_pwd = list(set(params['PWD']))
+    dictPWD = {
+        params['PWD'][0]: "", params['PWD'][1]: "",
+        params['PWD'][2]: "", params['PWD'][3]: "",
+        params['PWD'][4]: "", params['PWD'][5]: ""
+    }
+    # loop on unique digits
+    for element in range(len(uniq_digits_in_pwd)):
 
-#-> get each image of each button from the virtual keyboard
-os.makedirs("img", exist_ok=True)
-index = 0
-for lineNum in range(16):
-    id_image = "val_cel_"+ str(index)
-    img = driver.find_element_by_id(id_image).screenshot_as_png
-    image = Image.open(io.BytesIO(img))
-    image.save('img/'+id_image+'.png')
-    index += 1
+        # load Reference image for the current password digit
+        if (params['HEADLESS_PROCESS'] == "True"):
+            referenceDIR = 'REF_HEADLESS'
+        else:
+            referenceDIR = 'REF_LIVE_MODE'
 
-#-> Match for first pwd digit
-uniq_digits_in_pwd = set(params['PWD'])
-dictPWD = {params['PWD'][0]:"",params['PWD'][1]:"",params['PWD'][2]:"",params['PWD'][3]:"",params['PWD'][4]:"",params['PWD'][5]:""}
-for element in range(len(uniq_digits_in_pwd)):
+        referenceImage = referenceDIR + '/' + uniq_digits_in_pwd[element] + '_REF.png'
+        referenceIMG = cv2.imread(referenceImage)
 
-    # load Reference image for the current password digit
-    if (params['HEADLESS_PROCESS'] == "True"):
-        referenceDIR = 'REF_HEADLESS'
-    else:
-        referenceDIR = 'REF_LIVE_MODE'
+        # 2) Check for similarities between the 2 images
+        # loop on downloaded images
+        min_mse = 9999999
+        min_ind = -1
+        for index in range(16):
+            localIMG = cv2.imread(
+                f"{downloaded_images_folder}/val_cel_{str(index)}.png"
+            )
 
-    referenceImage = 'img/'+referenceDIR+'/'+uniq_digits_in_pwd[element]+'_REF.png'
-    referenceIMG = cv2.imread(referenceImage)
+            # convert the images to grayscale
+            gray_referenceIMG = cv2.cvtColor(referenceIMG, cv2.COLOR_BGR2GRAY)
+            gray_localIMG = cv2.cvtColor(localIMG, cv2.COLOR_BGR2GRAY)
 
-    # 2) Check for similarities between the 2 images
-    for index in range(16):
+            # look fo rthe ref image with the lower mean squared error difference
+            mse = mean_squared_error(gray_referenceIMG, gray_localIMG)
+            if mse < min_mse:
+                min_mse = mse
+                min_ind = index
 
-        localImage = 'val_cel_'+str(index)
+        dictPWD[uniq_digits_in_pwd[element]] = f"val_cel_{str(min_ind)}"
+    return dictPWD
 
-        localIMG = cv2.imread('img/'+localImage+'.png')
+if __name__ == "__main__":
 
-        # convert the images to grayscale
-        gray_referenceIMG = cv2.cvtColor(referenceIMG, cv2.COLOR_BGR2GRAY)
-        gray_localIMG = cv2.cvtColor(localIMG, cv2.COLOR_BGR2GRAY)
+    params = get_account_params()
+    driver = start_login(params)
+    dictPWD = detect_digits(params)
 
-        # compute the Structural Similarity Index (SSIM) between the two
-        # images, ensuring that the difference image is returned
-        s = ssim(gray_referenceIMG,gray_localIMG)
 
-        if (s > 0.98):
-            # print("SCORE=",score," LOCAL=",localImage,"REFERENCE=",referenceImage)
-            dictPWD[uniq_digits_in_pwd[element]]=localImage
-            break  #once we find the good match then skip to next pwd digit to search
+    #-> click on each button corresponding to the password
+    for digit in params['PWD']:
+        element = dictPWD.get(digit)
+        driver.find_element_by_id(element).click()
 
-#-> click on each button corresponding to the password
-for digit in params['PWD']:
-    element = dictPWD.get(digit)
-    driver.find_element_by_id(element).click()
+    #-> then click on Validate button
+    driver.find_element_by_id("valider").click()
+    driver.get("https://voscomptesenligne.labanquepostale.fr/voscomptes/canalXHTML/relevePdf/relevePdf_synthese/initPourCompteSelectionne-syntheseRelevesPDF.ea?compteNumero="+params['NumeroDeCompte'])
 
-#-> then click on Validate button
-driver.find_element_by_id("valider").click()
-driver.get("https://voscomptesenligne.labanquepostale.fr/voscomptes/canalXHTML/relevePdf/relevePdf_synthese/initPourCompteSelectionne-syntheseRelevesPDF.ea?compteNumero="+param_NumeroDeCompte)
+    #-> before downloading the file, get the list of same file in the directory
+    ListFileBefore = glob.glob(params['DownloadFolder']+'\\releve_CCP*.pdf')
 
-#-> before downloading the file, get the list of same file in the directory
-ListFileBefore = glob.glob(params['DownloadFolder']+'\\releve_CCP*.pdf')
+    driver.find_element_by_class_name(name="compte").click()
+    driver.get("https://voscomptesenligne.labanquepostale.fr/voscomptes/canalXHTML/relevePdf/relevePdf_synthese/refPDF-syntheseRelevesPDF.ea?indexCompteReleves=0&indexReleve=0")
 
-driver.find_element_by_class_name(name="compte").click()
-driver.get("https://voscomptesenligne.labanquepostale.fr/voscomptes/canalXHTML/relevePdf/relevePdf_synthese/refPDF-syntheseRelevesPDF.ea?indexCompteReleves=0&indexReleve=0")
+    time.sleep(10)  #let some seconds to download before stopping the webdriver
+    driver.quit()   # kill the firefox instance
 
-time.sleep(10)  #let some seconds to download before stopping the webdriver
-driver.quit()   # kill the firefox instance
+    #-> after downloading the file, get the list of same file in the directory
+    ListFileAfter = glob.glob(params['DownloadFolder']+'\\releve_CCP*.pdf')
 
-#-> after downloading the file, get the list of same file in the directory
-ListFileAfter = glob.glob(params['DownloadFolder']+'\\releve_CCP*.pdf')
+    newFile = ( (list(set(ListFileAfter) - set(ListFileBefore))) )[0]
 
-newFile = ( (list(set(ListFileAfter) - set(ListFileBefore))) )[0]
-
-print("New file downloaded to directory: ",os.path.basename(newFile))
+    print("New file downloaded to directory: ",os.path.basename(newFile))
