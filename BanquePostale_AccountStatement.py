@@ -32,6 +32,10 @@ from selenium import webdriver
 from selenium.webdriver.firefox.options import Options
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.firefox.firefox_binary import FirefoxBinary
+from selenium.webdriver.common.by import By
+from selenium.common.exceptions import TimeoutException
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 # from skimage.measure import compare_ssim #for compare_ssim
 # from skimage import measure #new version of compare_ssim
 from skimage.metrics import structural_similarity as ssim, hausdorff_distance, mean_squared_error
@@ -72,7 +76,7 @@ def get_account_params():
         params['HEADLESS_PROCESS'])
     return params
 
-def start_login(params):
+def create_driver(params):
     options = Options()
 
     if (params['HEADLESS_PROCESS'] == "True"):
@@ -84,25 +88,7 @@ def start_login(params):
     options.set_preference("browser.helperApps.neverAsk.saveToDisk", "application/pdf")
     options.set_preference("pdfjs.disabled", True)  # disable the built-in PDF viewer
     driver = webdriver.Firefox(executable_path=curr_path + '/geckodriver', options=options)
-    driver.get(
-        "https://voscomptesenligne.labanquepostale.fr/wsost/OstBrokerWeb/"
-        "loginform?TAM_OP=login&ERROR_CODE=0x00000000&"
-        "URL=%2Fvoscomptes%2FcanalXHTML%2Fidentif.ea%3Forigin%3Dparticuliers"
-    )
-
-    # send id to form
-    driver.find_element_by_id("val_cel_identifiant").send_keys(params['ID'])
-
-    #-> get each image of each button from the virtual keyboard
-    os.makedirs("img", exist_ok=True)
-    for index in range(16):
-        id_image = "val_cel_"+ str(index)
-        img = driver.find_element_by_id(id_image).screenshot_as_png
-        image = Image.open(io.BytesIO(img))
-        image.save('img/'+id_image+'.png')
-
     return driver
-
 
 def detect_digits(
     params,
@@ -149,22 +135,67 @@ def detect_digits(
         dictPWD[uniq_digits_in_pwd[element]] = f"val_cel_{str(min_ind)}"
     return dictPWD
 
-if __name__ == "__main__":
+def login(driver, params):
+    
+    driver.get(
+        "https://voscomptesenligne.labanquepostale.fr/wsost/OstBrokerWeb/"
+        "loginform?TAM_OP=login&ERROR_CODE=0x00000000&"
+        "URL=%2Fvoscomptes%2FcanalXHTML%2Fidentif.ea%3Forigin%3Dparticuliers"
+    )
 
-    params = get_account_params()
-    driver = start_login(params)
+    # send id to form
+    driver.find_element_by_id("val_cel_identifiant").send_keys(params['ID'])
+
+    #-> get each image of each button from the virtual keyboard
+    os.makedirs("img", exist_ok=True)
+    for index in range(16):
+        id_image = "val_cel_"+ str(index)
+        img = driver.find_element_by_id(id_image).screenshot_as_png
+        image = Image.open(io.BytesIO(img))
+        image.save('img/'+id_image+'.png')
+
     dictPWD = detect_digits(params)
-
 
     #-> click on each button corresponding to the password
     for digit in params['PWD']:
         element = dictPWD.get(digit)
         driver.find_element_by_id(element).click()
 
+    time.sleep(0.5)
     #-> then click on Validate button
     driver.find_element_by_id("valider").click()
-    driver.get("https://voscomptesenligne.labanquepostale.fr/voscomptes/canalXHTML/relevePdf/relevePdf_synthese/initPourCompteSelectionne-syntheseRelevesPDF.ea?compteNumero="+params['NumeroDeCompte'])
+    time.sleep(0.5)
+    try:
+        WebDriverWait(driver, 20).until(
+            EC.presence_of_element_located(
+                (By.XPATH, '//button[text()="Continuer sans accepter >"]')
+            )
+        ).click()
+        return True
+    except TimeoutException:
+        return False
 
+
+def download_operations(driver, params):
+    driver.get(
+        "https://voscomptesenligne.labanquepostale.fr/voscomptes/canalXHTML/CCP/releves_ccp/afficher-releve_ccp.ea"
+    )
+    button = driver.find_element_by_xpath('//a[@data-titrepopinv2="Télécharger le détail"]')
+    button.click()
+    a = 1
+    
+
+if __name__ == "__main__":
+
+    params = get_account_params()
+    driver = create_driver(params)
+    logged_in = login(driver, params)
+    if not logged_in:
+        print("Login failed, trying again")
+        time.sleep(5)
+        login(driver, params)
+    download_operations(driver, params)
+    
     #-> before downloading the file, get the list of same file in the directory
     ListFileBefore = glob.glob(params['DownloadFolder']+'\\releve_CCP*.pdf')
 
