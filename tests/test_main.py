@@ -16,7 +16,7 @@ class TestDetectDigits:
             'DownloadFolder': '.',
             'HEADLESS_PROCESS': 'False',
         }
-        res = BanquePostale_AccountStatement.detect_digits(
+        res = BanquePostale_AccountStatement.LBPDownloader().detect_digits(
             params=params,
             downloaded_images_folder='tests/files/keyboard_lbp1',
         )
