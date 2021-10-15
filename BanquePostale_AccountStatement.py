@@ -28,10 +28,12 @@
 ################################################################################
 import sys
 import abc
-import pydantic
+from pydantic import BaseModel, parse_file_as
 import time
+from typing import List
 from datetime import datetime, timedelta
-from selenium import webdriver
+# from selenium import webdriver
+from seleniumwire import webdriver
 from selenium.webdriver.firefox.options import Options
 # from selenium.webdriver.common.keys import Keys
 # from selenium.webdriver.firefox.firefox_binary import FirefoxBinary
@@ -39,6 +41,7 @@ from selenium.webdriver.common.by import By
 from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.common.keys import Keys
 # from skimage.measure import compare_ssim #for compare_ssim
 # from skimage import measure #new version of compare_ssim
 from skimage.metrics import structural_similarity as ssim, hausdorff_distance, mean_squared_error
@@ -50,45 +53,41 @@ import json
 
 curr_path = os.path.dirname(os.path.realpath(__file__))
 
+
+global DL_FOLDER
+DL_FOLDER = "/home/beroot/source/OpenCV_BanquePostale_AccountStatement/downloads"
+global HEADLESS_PROCESS
+HEADLESS_PROCESS = False
+
+
+class Account(BaseModel):
+    id: str
+    pwd: str
+    account_nb: str
+
+
 def get_account_params():
 
     #-> read banque account parameters from json file:
-    params = {}
-    try:
-        accountFileName = 'BanquePostale_account.json'
-        with open(accountFileName) as json_file:
-            data = json.load(json_file)
-    except:
-        ThisError = sys.exc_info()[0]
-        print("Error trying to import file",accountFileName,":",ThisError.__name__)
-        sys.exit() #stop the script
-
-    try:
-        params['NumeroDeCompte'] = data['account'][0]['param_NumeroDeCompte']
-        params['ID'] = data['account'][0]['param_ID']
-        params['PWD'] = data['account'][0]['param_PWD']
-        params['DownloadFolder'] =  curr_path
-        params['HEADLESS_PROCESS'] =  data['account'][0]['param_HEADLESS_PROCESS']
-    except:
-        print("Incorrect input file format:",sys.exc_info())
-        sys.exit() #stop the script
-
-    print("Parameters extracted from input file: ",params['NumeroDeCompte'],    \
-        '/',params['ID'],'/',params['PWD'],'/',params['DownloadFolder'],'/',            \
-        params['HEADLESS_PROCESS'])
+    params = parse_file_as(List[Account], 'BanquePostale_account.json')
     return params
 
 def create_driver(params):
     options = Options()
 
-    if (params['HEADLESS_PROCESS'] == "True"):
+    if (HEADLESS_PROCESS == "True"):
         options.add_argument("--headless")
 
     options.set_preference("browser.download.folderList", 2)
-    options.set_preference("browser.download.dir", params['DownloadFolder'])
+    options.set_preference("browser.download.dir", ".")
+    options.set_preference("browser.download.manager.showWhenStarting", False)
+    options.set_preference("browser.download.downloadDir", ".")
+    options.set_preference("browser.download.defaultFolder", ".")
     options.set_preference("browser.download.useDownloadDir", True)
-    options.set_preference("browser.helperApps.neverAsk.saveToDisk", "text/tab-separated-values")
-    options.set_preference("browser.helperApps.neverAsk.saveToDisk", "text/csv")
+    # options.set_preference("browser.download.viewableInternally.enabledTypes", "")
+    options.set_preference("browser.helperApps.neverAsk.saveToDisk", 'text/plain;application/pdf;text/html;application/vnd.ms-excel;text/csv;application/x-csv')
+    options.set_preference("browser.helperApps.alwaysAsk.force", False)
+    options.set_preference("browser.download.forbid_open_with", True)
     driver = webdriver.Firefox(executable_path=curr_path + '/geckodriver', options=options)
     return driver
 
@@ -96,13 +95,13 @@ def create_driver(params):
 class IBankDownloader(abc.ABC):
     def login(
         driver: webdriver.Firefox,
-        params
+        params: Account
     ):
         pass
 
     def download_operations(
         driver: webdriver.Firefox,
-        params
+        params: Account
     ):
         pass
 
@@ -111,21 +110,21 @@ class LBPDownloader(IBankDownloader):
 
     def detect_digits(
         self,
-        params,
+        params: Account,
         downloaded_images_folder: str = 'img',
     ):
         #-> Match for first pwd digit
-        uniq_digits_in_pwd = list(set(params['PWD']))
+        uniq_digits_in_pwd = list(set(params.pwd))
         dictPWD = {
-            params['PWD'][0]: "", params['PWD'][1]: "",
-            params['PWD'][2]: "", params['PWD'][3]: "",
-            params['PWD'][4]: "", params['PWD'][5]: ""
+            params.pwd[0]: "", params.pwd[1]: "",
+            params.pwd[2]: "", params.pwd[3]: "",
+            params.pwd[4]: "", params.pwd[5]: ""
         }
         # loop on unique digits
         for element in range(len(uniq_digits_in_pwd)):
 
             # load Reference image for the current password digit
-            if (params['HEADLESS_PROCESS'] == "True"):
+            if (HEADLESS_PROCESS == "True"):
                 referenceDIR = 'REF_HEADLESS'
             else:
                 referenceDIR = 'REF_LIVE_MODE'
@@ -157,8 +156,8 @@ class LBPDownloader(IBankDownloader):
 
     def login(
         self,
-        driver,
-        params
+        driver: webdriver.Firefox,
+        params: Account
     ):
         
         driver.get(
@@ -168,7 +167,7 @@ class LBPDownloader(IBankDownloader):
         )
 
         # send id to form
-        driver.find_element_by_id("val_cel_identifiant").send_keys(params['ID'])
+        driver.find_element_by_id("val_cel_identifiant").send_keys(params.id)
 
         #-> get each image of each button from the virtual keyboard
         os.makedirs("img", exist_ok=True)
@@ -181,7 +180,7 @@ class LBPDownloader(IBankDownloader):
         dictPWD = self.detect_digits(params)
 
         #-> click on each button corresponding to the password
-        for digit in params['PWD']:
+        for digit in params.pwd:
             element = dictPWD.get(digit)
             driver.find_element_by_id(element).click()
 
@@ -192,7 +191,7 @@ class LBPDownloader(IBankDownloader):
         try:
             WebDriverWait(driver, 20).until(
                 EC.presence_of_element_located(
-                    (By.XPATH, '//button[text()="Continuer sans accepter >"]')
+                    (By.XPATH, '//button[text()="Continuer sans accepter >" or text()="CONTINUER SANS ACCEPTER"]')
                 )
             ).click()
             return True
@@ -204,10 +203,10 @@ class LBPDownloader(IBankDownloader):
 
     def download_operations(
         self,
-        driver,
-        params
+        driver: webdriver.Firefox,
+        params: Account
     ):
-        account = params['NumeroDeCompte']
+        account = params.account_nb
         elmt = WebDriverWait(driver, 20).until(
             EC.element_to_be_clickable((
                 By.XPATH,
@@ -215,15 +214,18 @@ class LBPDownloader(IBankDownloader):
             ))
         )
         driver.execute_script("arguments[0].click();", elmt)
+        time.sleep(5)
 
-        button = WebDriverWait(driver, 20).until(
+        # button = driver.find_element_by_xpath('//button[@data-titrepopinv2="Téléchargement du détail de vos comptes"]')
+        # button.click()
+        # time.sleep(5)
+        WebDriverWait(driver, 20).until(
             EC.element_to_be_clickable((
                 By.XPATH,
-                '//a[@data-titrepopinv2="Télécharger le détail"]'
+                '//button[@data-titrepopinv2="Téléchargement du détail de vos comptes"]'
             ))
-        )
-        time.sleep(1)
-        button.click()
+        ).click()
+        time.sleep(5)
 
         iframe = driver.find_elements_by_tag_name("iframe")[0]
         driver.switch_to.frame(iframe)
@@ -250,16 +252,86 @@ class LBPDownloader(IBankDownloader):
         input1.send_keys(date1)
         input2.send_keys(date2)
 
+        # choose type of file to download
+        driver.find_element_by_xpath('//*/span[contains(text(), "Tableur TSV")]').click()
+        WebDriverWait(driver, 20).until(
+            EC.element_to_be_clickable((
+                By.XPATH,
+                '//li[contains(text(), "Tableur CSV")]'
+            ))
+        ).click()
+        time.sleep(0.5)
+
         driver.find_element_by_xpath('//*/span[contains(text(),"Confirmer")]').click()
         time.sleep(5)
-        driver.find_element_by_xpath('//button[@class="close"]').click()
-        driver.switch_to.default_content()
+        # POST request, to
+        # 'https://voscomptesenligne.labanquepostale.fr/voscomptes/canalXHTML/comptesCommun/telechargementMouvement/validerTelechargement-telechargementMouvements.ea?ts=1634023883889'
+        last_post_request = [req for req in driver.requests if req.method == 'POST'][-1]
+        data = last_post_request.response.body.decode('CP1252').replace("\r", "").split('\n')
+        name = data[0].split(";")[1]
+        date = data[3].split(";")[1].split("/")
+        lines = data[7:-1]
+        with open(
+            f"{DL_FOLDER}/LBP_{name}_{date[2]}-{date[1]}-{date[0]}.csv",
+            'w'
+        ) as file:
+            file.write('\n'.join(lines))
+        # driver.find_element_by_xpath('//button[@class="close"]').click()
+        # driver.switch_to.default_content()
     
-    
+
+class BanqPopDownloader(IBankDownloader):
+    def login(
+        self,
+        driver: webdriver.Firefox,
+        params: Account
+    ):
+        driver.get("https://www.banquepopulaire.fr")
+        WebDriverWait(driver, 20).until(
+            EC.element_to_be_clickable((
+                By.XPATH,
+                '//*/span[contains(text(),"Continuer sans accepter")]'
+            ))
+        ).click()
+        WebDriverWait(driver, 20).until(
+            EC.element_to_be_clickable((
+                By.XPATH,
+                '//*/span[contains(text(),"Espace personnel")]'
+            ))
+        ).click()
+        WebDriverWait(driver, 20).until(
+            EC.element_to_be_clickable((
+                By.XPATH,
+                f'//select[@id="select-v2-1"]'
+            ))
+        ).click()
+        # choose region
+        WebDriverWait(driver, 20).until(
+            EC.element_to_be_clickable((
+                By.XPATH,
+                '//option[contains(text(),"AUVERGNE RHONE ALPES")]'
+            ))
+        ).click()
+        # enter id
+        driver.find_element_by_xpath('//input[@id="input-identifier"]').send_keys("66666666")
+        WebDriverWait(driver, 20).until(
+            EC.element_to_be_clickable((
+                By.XPATH,
+                '//button[@class="full primary ui-button bpce-focus-reset]'
+            ))
+        ).click()
+
+    def download_operations(
+        self,
+        driver: webdriver.Firefox,
+        params: Account
+    ):
+        pass
+
 
 if __name__ == "__main__":
 
-    params = get_account_params()
+    params = get_account_params()[0]
     driver = create_driver(params)
 
     lbp_dl = LBPDownloader()

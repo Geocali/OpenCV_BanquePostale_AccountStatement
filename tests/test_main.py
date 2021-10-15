@@ -6,9 +6,9 @@ sys.path.append(curr_path + "/..")
 
 import BanquePostale_AccountStatement
 
-class TestDetectDigits:
+class Tests:
 
-    def test_a(self) -> None:
+    def test_detect_digits_lbp(self) -> None:
         params = {
             'NumeroDeCompte': '2222222',
             'ID': '123456',
