@@ -29,13 +29,14 @@ class BanqPopDownloader(IBankDownloader):
         driver: webdriver.Firefox,
         params: model.Account
     ):
-        driver.get("https://www.banquepopulaire.fr")
+        driver.get("https://www.banquepopulaire.fr/se-connecter/sso?service=cyber")
         WebDriverWait(driver, 20).until(
             EC.element_to_be_clickable((
                 By.XPATH,
-                '//*/span[contains(text(),"Espace personnel")]'
+                '//*/span[contains(text(),"Continuer sans accepter")]'
             ))
         ).click()
+        time.sleep(0.5)
         WebDriverWait(driver, 20).until(
             EC.element_to_be_clickable((
                 By.XPATH,
@@ -46,17 +47,25 @@ class BanqPopDownloader(IBankDownloader):
         WebDriverWait(driver, 20).until(
             EC.element_to_be_clickable((
                 By.XPATH,
-                f'//option[contains(text(),"{params.region}")]'
+                f'//option[contains(text(),"{params[0].region}")]'
             ))
         ).click()
         # enter id
-        driver.find_element_by_xpath('//input[@id="input-identifier"]').send_keys(params.id)
+        driver.find_element_by_xpath('//input[@id="input-identifier"]').send_keys(params[0].id)
+        # Validate
         WebDriverWait(driver, 20).until(
             EC.element_to_be_clickable((
                 By.XPATH,
-                '//button[@class="full primary ui-button bpce-focus-reset]'
+                '//*/span[contains(text(),"Valider")]'
             ))
         ).click()
+        WebDriverWait(driver, 20).until(
+            EC.element_to_be_clickable((
+                By.XPATH,
+                '//*/span[contains(text(),"Plus tard")]'
+            ))
+        ).click()
+        a = 1
 
     def download_operations(
         self,
